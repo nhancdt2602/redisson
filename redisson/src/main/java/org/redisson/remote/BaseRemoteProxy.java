@@ -24,6 +24,7 @@ import org.redisson.client.codec.Codec;
 import org.redisson.client.codec.LongCodec;
 import org.redisson.client.protocol.RedisCommands;
 import org.redisson.command.CommandAsyncExecutor;
+import org.redisson.failpoint.FailPoint;
 import org.redisson.remote.ResponseEntry.Result;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +74,7 @@ public abstract class BaseRemoteProxy {
     
     protected CompletionStage<RemoteServiceAck> tryPollAckAgainAsync(RemoteInvocationOptions optionsCopy,
                                                                      String ackName, String requestId) {
+        System.out.println("tryPoll");
         RFuture<Boolean> ackClientsFuture = commandExecutor.evalWriteNoRetryAsync(ackName, LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
                     "if redis.call('setnx', KEYS[1], 1) == 1 then " 
                         + "redis.call('pexpire', KEYS[1], ARGV[1]);"
@@ -82,9 +84,14 @@ public abstract class BaseRemoteProxy {
                     + "return 1;",
                 Arrays.asList(ackName), optionsCopy.getAckTimeoutInMillis());
         return ackClientsFuture.thenCompose(res -> {
-            if (res) {
-                return pollResponse(commandExecutor.getServiceManager().getConfig().getTimeout(), requestId, true);
+            if (true) {
+                FailPoint.simulateDelay(100);
+                System.out.println("Retry poll " + Thread.currentThread());
+                CompletableFuture ff = pollResponse(commandExecutor.getServiceManager().getConfig().getTimeout(), requestId, true);
+                System.out.println("RetryFut=" + ff);
+                return ff;
             }
+            System.out.println("No Retry poll");
             return CompletableFuture.completedFuture(null);
         });
     }
@@ -102,7 +109,7 @@ public abstract class BaseRemoteProxy {
 
             Result res = new Result(responseFuture);
 
-            Timeout responseTimeoutFuture = createResponseTimeout(timeout, requestId, responseFuture, res);
+            Timeout responseTimeoutFuture = createResponseTimeout(timeout * 10, requestId, responseFuture, res);
             res.setResponseTimeoutFuture(responseTimeoutFuture);
 
             Map<String, List<Result>> entryResponses = entry.getResponses();
@@ -113,6 +120,7 @@ public abstract class BaseRemoteProxy {
             } else {
                 list.add(res);
             }
+            System.out.println("ListSize=" + list.size());
             return entry;
         });
 
@@ -132,14 +140,16 @@ public abstract class BaseRemoteProxy {
                             return entry;
                         }
 
-                        List<Result> list = entry.getResponses().get(requestId);
-                        list.remove(res);
-                        if (list.isEmpty()) {
-                            entry.getResponses().remove(requestId);
-                        }
-                        if (entry.getResponses().isEmpty()) {
-                            return null;
-                        }
+                        System.out.println("Timeout Wheel");
+
+//                        List<Result> list = entry.getResponses().get(requestId);
+//                        list.remove(res);
+//                        if (list.isEmpty()) {
+//                            entry.getResponses().remove(requestId);
+//                        }
+//                        if (entry.getResponses().isEmpty()) {
+//                            return null;
+//                        }
                         return entry;
                     });
                 }, timeout, TimeUnit.MILLISECONDS);
@@ -207,6 +217,17 @@ public abstract class BaseRemoteProxy {
                     return entry;
                 }
 
+                System.out.println("ResponseListener=" + list.size() + " " + Thread.currentThread());
+
+//                if (list.size() == 2) {
+//                    System.out.println("Size=2, sleeping");
+//                    try {
+//                        Thread.sleep(1000);
+//                    } catch (Exception ie) {
+//                        //
+//                    }
+//                }
+
                 Result res = list.remove(0);
                 if (list.isEmpty()) {
                     entry.getResponses().remove(key);
@@ -214,6 +235,8 @@ public abstract class BaseRemoteProxy {
 
                 CompletableFuture<RRemoteServiceResponse> f = res.getPromise();
                 res.cancelResponseTimeout();
+                System.out.println("SettingFuture=" + f);
+                System.out.println("SettingFuture=" + response);
                 future.set(f);
 
                 if (entry.getResponses().isEmpty()) {
@@ -224,7 +247,10 @@ public abstract class BaseRemoteProxy {
                 return entry;
             });
 
+            System.out.println("TrySetFuture");
+
             if (future.get() != null) {
+                System.out.println("SetFuture");
                 future.get().complete(response);
             }
         };

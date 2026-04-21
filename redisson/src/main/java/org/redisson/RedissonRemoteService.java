@@ -23,6 +23,7 @@ import org.redisson.client.protocol.RedisCommands;
 import org.redisson.command.CommandAsyncExecutor;
 import org.redisson.config.MasterSlaveServersConfig;
 import org.redisson.executor.RemotePromise;
+import org.redisson.failpoint.FailPoint;
 import org.redisson.misc.CompletableFutureWrapper;
 import org.redisson.remote.*;
 import org.slf4j.Logger;
@@ -345,6 +346,8 @@ public class RedissonRemoteService extends BaseRemoteService implements RRemoteS
                                         resubscribe(remoteInterface, requestQueue, executor, bean);
                                         return;
                                     }
+
+                                    FailPoint.simulateDelay(250);
                                     
 
                                     RList<Object> list = new RedissonList<>(codec, commandExecutor, responseName, null);
